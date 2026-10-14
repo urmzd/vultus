@@ -4,9 +4,9 @@ import { AttachmentView } from "@vultus/components";
 import type { Turn } from "@vultus/core";
 import * as fx from "@vultus/core/fixtures";
 import { renderToSlack } from "@vultus/render-slack";
+import { streamTurn } from "@vultus/slack-host";
 import { eventsFor, registry, views } from "./fixtures";
 import { buildManifest, CAPABILITIES, capabilitiesExcept, createAppUrl } from "./manifest";
-import { streamTurn } from "./run";
 import { serve } from "./serve";
 import { readEnv, slackClient, uploadFile, validateBlocks } from "./slack";
 
@@ -147,6 +147,7 @@ async function main() {
           recipientTeam: auth.team_id,
         },
         eventsFor(turn),
+        { log: (line) => console.warn(`  ${line}`) },
       );
       console.log(`streamed → ${final.status}`);
       return;

@@ -7,6 +7,7 @@ import { renderToHostTree } from "./reconciler";
 
 export { type Block, LIMITS, type Placement, type SerializeResult } from "./blocks";
 export * from "./feedback";
+export * from "./forms";
 export * from "./lifecycle";
 export { plainDate, toMrkdwn, toPlain } from "./mrkdwn";
 export { breakMarkdown, nextBreak } from "./split";

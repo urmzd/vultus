@@ -190,7 +190,11 @@ export interface FeedbackProps {
   up: ActionRef;
   down: ActionRef;
   selected?: "up" | "down";
-  labels?: { up: string; down: string };
+  /**
+   * `rated` is what a surface that can't show a pressed button says once rated
+   * (Slack's rating control keeps no selection): "Rated helpful".
+   */
+  labels?: { up: string; down: string; rated?: { up: string; down: string } };
   /**
    * The comment prompt shown after a rating, or `false` for none. The rating is
    * sent on the click; the prompt only adds a comment (`ActionId.feedbackComment`).
@@ -254,6 +258,34 @@ export interface TilesProps {
   }[];
 }
 
+/**
+ * A number the reader types, sent with its button as the action's `option`
+ * (the number in `unit`, as a plain decimal string). The web draws a number
+ * field beside the button. Slack has no number field in messages, so it shows
+ * the button and the host opens `amountModal` on the click to collect it.
+ */
+export interface AmountProps {
+  label: string;
+  /** "usd" takes dollars and cents and shows a dollar sign; anything else is a whole number. */
+  unit: string;
+  /** The amount must be more than this, such as the limit in force. */
+  above?: number;
+  /** A muted line under the field. */
+  hint?: string;
+  submit: { label: string; action: ActionRef; style?: "primary" | "danger" };
+}
+
+/**
+ * What a person asked, in their own words. The web draws it as their chat
+ * bubble; Slack posts it as the message a thread hangs from. `by` is the
+ * person's name, or on Slack a mention such as `<@U123>`, which Slack shows
+ * as their name.
+ */
+export interface RequestProps {
+  by: string;
+  text: string;
+}
+
 export interface TableProps {
   columns: { key: string; label: string; align?: "left" | "center" | "right" }[];
   rows: Record<string, string | number>[];
@@ -284,6 +316,8 @@ export interface PrimitiveProps {
   Row: RowProps;
   Prompt: PromptProps;
   Tiles: TilesProps;
+  Amount: AmountProps;
+  Request: RequestProps;
 }
 
 export type PrimitiveName = keyof PrimitiveProps;

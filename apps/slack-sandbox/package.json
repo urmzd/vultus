@@ -13,6 +13,7 @@
     "@vultus/components": "workspace:*",
     "@vultus/core": "workspace:*",
     "@vultus/render-slack": "workspace:*",
+    "@vultus/slack-host": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

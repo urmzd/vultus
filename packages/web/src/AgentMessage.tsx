@@ -1,4 +1,4 @@
-import { type Copy, defaultCopy, TurnView } from "@vultus/components";
+import { type Copy, defaultCopy, type TurnCapabilities, TurnView } from "@vultus/components";
 import { ActionId, formatTokens, formatUsd, type Turn, type Usage } from "@vultus/core";
 import {
   ActionContext,
@@ -9,6 +9,7 @@ import {
   ItemActionsContext,
   Rating,
   RefreshIcon,
+  RequestBubble,
   ShimmerVerb,
   SuppressContext,
   THINKING_VERBS,
@@ -113,7 +114,7 @@ const actionBtn =
   "inline-flex size-7 items-center justify-center rounded-aui-sm text-aui-muted transition-colors hover:bg-aui-hover hover:text-aui-fg focus-visible:outline-2 focus-visible:outline-aui-accent aria-pressed:text-aui-accent";
 
 /** Copy, regenerate, rate (then an optional comment), and usage. */
-function MessageActions({ turn, copy }: { turn: Turn; copy: Copy }) {
+function MessageActions({ turn, copy, rate }: { turn: Turn; copy: Copy; rate: boolean }) {
   const onAction = useContext(ActionContext);
   const itemActions = useContext(ItemActionsContext);
   const text = turn.text.replace(/\[\[[^\]]+\]\]/g, "").trim();
@@ -133,13 +134,15 @@ function MessageActions({ turn, copy }: { turn: Turn; copy: Copy }) {
       >
         <RefreshIcon size={13} />
       </button>
-      <Rating
-        up={{ id: ActionId.feedback, payload: { turnId: turn.id, target: "up" } }}
-        down={{ id: ActionId.feedback, payload: { turnId: turn.id, target: "down" } }}
-        selected={turn.feedback}
-        labels={{ up: copy.helpful, down: copy.notHelpful }}
-        prompt={copy.feedbackPrompt}
-      />
+      {rate && (
+        <Rating
+          up={{ id: ActionId.feedback, payload: { turnId: turn.id, target: "up" } }}
+          down={{ id: ActionId.feedback, payload: { turnId: turn.id, target: "down" } }}
+          selected={turn.feedback}
+          labels={{ up: copy.helpful, down: copy.notHelpful }}
+          prompt={copy.feedbackPrompt}
+        />
+      )}
       {turn.usage && <UsageChip usage={turn.usage} />}
     </div>
   );
@@ -158,6 +161,7 @@ export function AgentMessage({
   copy = defaultCopy,
   itemActions,
   feedbackPrompt = true,
+  capabilities,
 }: {
   turn: Turn;
   copy?: Copy;
@@ -174,6 +178,8 @@ export function AgentMessage({
    * always sent on the click; turning this off only skips the question.
    */
   feedbackPrompt?: boolean;
+  /** What the host can act on. `feedback: false` hides the rating; `report: false` Report Issue. */
+  capabilities?: TurnCapabilities;
 }) {
   const inherited = useContext(ItemActionsContext);
   const statusLine = `**${turn.agent.name}** · ${copy.status[turn.status]}`;
@@ -226,7 +232,7 @@ export function AgentMessage({
           <TurnMetaContext.Provider value={turn}>
             <SuppressContext.Provider value={suppressed}>
               <div className="aui-stack">
-                <TurnView turn={turn} copy={copy} />
+                <TurnView turn={turn} copy={copy} capabilities={capabilities} />
                 {turn.status === "stopped" && turn.stop && (
                   <StopBanner turnId={turn.id} stop={turn.stop} label={copy.stopPhase[turn.stop]} />
                 )}
@@ -235,7 +241,7 @@ export function AgentMessage({
           </TurnMetaContext.Provider>
           {final && (
             <FeedbackPromptContext.Provider value={feedbackPrompt}>
-              <MessageActions turn={turn} copy={copy} />
+              <MessageActions turn={turn} copy={copy} rate={capabilities?.feedback !== false} />
             </FeedbackPromptContext.Provider>
           )}
         </ItemActionsContext.Provider>
@@ -244,13 +250,10 @@ export function AgentMessage({
   );
 }
 
-/** The person's message: a right-aligned bubble. */
+/**
+ * The person's message: a right-aligned bubble. The same bubble `RequestView`
+ * draws inside a surface, which Slack posts as the thread's first message.
+ */
 export function UserMessage({ text, name = "You" }: { text: string; name?: string }) {
-  return (
-    <article aria-label={`${name} message`} className="aui-fade-up flex justify-end">
-      <p className="max-w-[min(80%,36rem)] whitespace-pre-wrap break-words rounded-aui-lg rounded-br-aui-sm bg-aui-subtle px-3.5 py-2 text-aui-base text-aui-fg">
-        {text}
-      </p>
-    </article>
-  );
+  return <RequestBubble by={name} text={text} />;
 }

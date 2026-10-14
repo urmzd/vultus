@@ -184,6 +184,10 @@ class Serializer {
         return this.prompt(node);
       case "Tiles":
         return this.tiles(p);
+      case "Amount":
+        return this.amount(p);
+      case "Request":
+        return this.request(p);
       case "Summary":
         // First summary wins: the outermost component states the point.
         this.summary ??= toPlain((p as PrimitiveProps["Summary"]).text);
@@ -299,6 +303,8 @@ class Serializer {
     });
     const enabled = options.filter((o) => !o.disabled).slice(0, 10);
     if (options.length > 10) this.warnings.push(`${options.length} checkboxes; Slack shows 10`);
+    // Nothing to tick: Slack refuses a checkboxes element with no options.
+    if (enabled.length === 0) return;
     const initial = enabled.filter((o) => selected.includes(o.id)).map(option);
     this.blocks.push({
       type: "actions",
@@ -460,15 +466,18 @@ class Serializer {
       );
     }
     const { blockId } = node.props as { blockId?: string };
+    const elements = [
+      ...buttons
+        .slice(0, LIMITS.actionsElements - menus.length)
+        .map((b, i) => this.button(b.props as unknown as PrimitiveProps["Button"], i)),
+      ...menus.map((m, i) => this.overflow(m.props as unknown as PrimitiveProps["Menu"], i)),
+    ];
+    // Slack refuses an actions block with no elements: a row with nothing to offer is left out.
+    if (elements.length === 0) return;
     this.blocks.push({
       type: "actions",
       ...(blockId ? { block_id: this.clip(blockId, LIMITS.blockId, "block_id") } : {}),
-      elements: [
-        ...buttons
-          .slice(0, LIMITS.actionsElements - menus.length)
-          .map((b, i) => this.button(b.props as unknown as PrimitiveProps["Button"], i)),
-        ...menus.map((m, i) => this.overflow(m.props as unknown as PrimitiveProps["Menu"], i)),
-      ],
+      elements,
     });
   }
 
@@ -624,7 +633,38 @@ class Serializer {
     }
   }
 
-  feedback({ up, down, labels, blockId }: PrimitiveProps["Feedback"]) {
+  /**
+   * Slack has no number field in a message: the button asks the host to open
+   * `amountModal`, which collects the number and sends the same action.
+   */
+  amount({ label, hint, submit }: PrimitiveProps["Amount"]) {
+    const button: HostNode = {
+      type: "aui:Button",
+      props: {
+        label: submit.label,
+        action: submit.action,
+        ...(submit.style ? { style: submit.style } : {}),
+      },
+      children: [],
+    };
+    const text = [`**${label}**`, hint].filter(Boolean).join("\n");
+    this.blocks.push(this.section(text, { type: "aui:Amount", props: {}, children: [button] }));
+  }
+
+  /** What a person asked, as the message a thread hangs from: who, then their words. */
+  request({ by, text }: PrimitiveProps["Request"]) {
+    const who = MENTION.test(by) ? by : `*${escapeMrkdwn(by)}*`;
+    this.fallback.push(`${by}: ${text}`);
+    this.blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: this.clip(`${who}: ${escapeMrkdwn(text)}`, LIMITS.sectionText, "request"),
+      },
+    });
+  }
+
+  feedback({ up, down, selected, labels, blockId }: PrimitiveProps["Feedback"]) {
     this.blocks.push({
       type: "context_actions",
       ...(blockId ? { block_id: this.clip(blockId, LIMITS.blockId, "block_id") } : {}),
@@ -643,6 +683,13 @@ class Serializer {
         },
       ],
     });
+    // The buttons keep no pressed state, so a rating already given is said in words.
+    if (selected) {
+      const said =
+        labels?.rated?.[selected] ??
+        `Rated ${(selected === "up" ? (labels?.up ?? "Helpful") : (labels?.down ?? "Not helpful")).toLowerCase()}`;
+      this.blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: toMrkdwn(said) }] });
+    }
   }
 
   table({ columns, rows }: PrimitiveProps["Table"]) {
@@ -720,6 +767,24 @@ class Serializer {
       warnings: this.warnings,
     };
   }
+}
+
+/** A Slack mention on its own: `<@U123>`. */
+const MENTION = /^<@[UW][A-Z0-9]+>$/;
+
+/**
+ * A person's own words as mrkdwn: `<`, `>` and `&` are escaped so nothing in
+ * them becomes a link or a ping, except mentions and channel links Slack put there.
+ */
+function escapeMrkdwn(text: string): string {
+  return text
+    .split(/(<[@#!][^<>\s]+>)/g)
+    .map((piece, i) =>
+      i % 2 === 1
+        ? piece
+        : piece.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+    )
+    .join("");
 }
 
 /** Flatten through any non-primitive wrappers so containers find their children. */

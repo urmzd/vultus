@@ -504,6 +504,7 @@ export function resolveMessage(
             resolution: done("raised", formatAmount(Number(payload.option), part.meter.unit)),
           };
         }
+        if (id === ActionId.acknowledge) return { ...part, resolution: done("acknowledged") };
         return part;
       case "alert":
         if (id === ActionId.acknowledge) return { ...part, resolution: done("acknowledged") };
