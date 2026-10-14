@@ -41,6 +41,9 @@ importers:
       '@vultus/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@vultus/primitives':
+        specifier: workspace:*
+        version: link:../../packages/primitives
       '@vultus/render-slack':
         specifier: workspace:*
         version: link:../../packages/render-slack
@@ -132,6 +135,9 @@ importers:
 
   packages/render-slack:
     dependencies:
+      '@vultus/components':
+        specifier: workspace:*
+        version: link:../components
       '@vultus/core':
         specifier: workspace:*
         version: link:../core
@@ -148,9 +154,6 @@ importers:
       '@types/react-reconciler':
         specifier: ^0.33.1
         version: 0.33.1(@types/react@19.3.0)
-      '@vultus/components':
-        specifier: workspace:*
-        version: link:../components
 
   packages/render-web:
     dependencies:

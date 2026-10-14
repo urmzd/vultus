@@ -9,6 +9,7 @@ import {
   type TurnEvent,
 } from "@vultus/core";
 import * as fx from "@vultus/core/fixtures";
+import { Context } from "@vultus/primitives";
 import {
   AMOUNT_MODAL,
   amountModal,
@@ -72,6 +73,11 @@ const HELP = [
   "• `status`: a system alert that resolves in place",
   "Anything else gets a plain answer.",
 ].join("\n");
+
+/** Slack's encoded message text back to what the person typed: `&lt;` `&gt;` `&amp;` decoded. */
+function fromSlack(text: string): string {
+  return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -139,8 +145,13 @@ export async function serve(slack: SlackClient, env: SandboxEnv) {
     via: string,
   ) => {
     // The thread hangs from what was asked, in the same component the web draws as a bubble.
-    const asked = renderToSlack(<RequestView by={`<@${where.user}>`} text={text} />);
-    console.log(`  asked ${via}`);
+    // Said under it: where the question came from ("Asked with `/agent`").
+    const asked = renderToSlack(
+      <>
+        <RequestView by={`<@${where.user}>`} text={text} />
+        <Context items={[`Asked ${via}`]} />
+      </>,
+    );
     const root = await slack.call<{ ts: string; channel: string }>("chat.postMessage", {
       channel: where.channel,
       text: asked.text,
@@ -366,16 +377,13 @@ export async function serve(slack: SlackClient, env: SandboxEnv) {
       if (part?.type !== "budget") return whisper("That limit isn't in the sandbox's fixtures.");
       await slack.call("views.open", {
         trigger_id: payload.trigger_id,
-        view: amountModal(
-          { action: ui, unit: part.meter.unit, above: part.meter.limit },
-          {
-            title: defaultCopy.raiseLimitTitle,
-            label: defaultCopy.newLimit,
-            submit: defaultCopy.raiseLimit,
-            cancel: defaultCopy.cancel,
-            moreThan: defaultCopy.moreThan,
-          },
-        ),
+        // Its words default to vultus copy (raiseLimitTitle, newLimit, raiseLimit, cancel).
+        view: amountModal({
+          action: ui,
+          unit: part.meter.unit,
+          above: part.meter.limit,
+          ...(part.raiseMax !== undefined ? { max: part.raiseMax } : {}),
+        }),
       });
       return;
     }
@@ -640,7 +648,8 @@ export async function serve(slack: SlackClient, env: SandboxEnv) {
     team_id: string;
     response_url: string;
   }) => {
-    const text = command.text.trim();
+    // A command's text arrives entity-encoded; RequestView takes the words as typed.
+    const text = fromSlack(command.text).trim();
     if (!text || text === "help") {
       await slack.respond(command.response_url, { response_type: "ephemeral", text: HELP });
       return;

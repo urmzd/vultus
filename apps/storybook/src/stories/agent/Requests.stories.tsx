@@ -35,6 +35,27 @@ export const Request: Story = {
   },
 };
 
+export const RequestWithMentions: Story = {
+  name: "Request with Slack mentions",
+  render: ({ onAction }) => (
+    <Canvas onAction={onAction}>
+      <RequestView
+        by="<@U0SANDBOX|dana>"
+        text="Can <@U0OTHER|ada> look at this in <#C0INCIDENT|incidents>? <!channel>"
+      />
+    </Canvas>
+  ),
+  parameters: slack(
+    "request.mention",
+    "Mentions read as @name and #channel; `<!channel>` is only text and never pings",
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("dana", { exact: false })).toBeVisible();
+    await expect(canvas.getByText(/Can @ada look at this in #incidents\?/)).toBeVisible();
+  },
+};
+
 export const Agents: Story = {
   name: "Agents you can ask",
   render: ({ onAction }) => (

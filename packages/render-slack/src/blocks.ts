@@ -1,6 +1,7 @@
+import { defaultCopy } from "@vultus/components";
 import { type Citation, encodeAction, formatBytes, type Tone } from "@vultus/core";
 import type { PrimitiveName, PrimitiveProps, TaskProps } from "@vultus/primitives";
-import { toMrkdwn, toPlain } from "./mrkdwn";
+import { escapeSlackText, isMention, plainName, toMrkdwn, toPlain } from "./mrkdwn";
 import type { HostChild, HostNode } from "./reconciler";
 import { nextBreak } from "./split";
 import { slackTaskNote, slackTaskStatus } from "./status";
@@ -35,6 +36,14 @@ export const LIMITS = {
   optionText: 75,
   optionValue: 150,
 } as const;
+
+export interface SerializeOptions {
+  /**
+   * The host opens `amountModal` when an `Amount` button is clicked. Without
+   * it an `Amount` renders nothing on Slack, since its button would lead nowhere.
+   */
+  amountForm?: boolean;
+}
 
 export interface SerializeResult {
   /** The first message. Complete on its own unless `pages` has more than one entry. */
@@ -78,7 +87,10 @@ class Serializer {
   /** Accessories each sit in their own block; number them across the layout so no two match. */
   accessories = 0;
 
-  constructor(readonly placement: Placement) {}
+  constructor(
+    readonly placement: Placement,
+    readonly options: SerializeOptions = {},
+  ) {}
 
   clip(text: string, max: number, what: string): string {
     if (text.length <= max) return text;
@@ -130,8 +142,10 @@ class Serializer {
   }
 
   citationLine(c: Citation, n: number): string {
-    const title = c.url ? `<${c.url}|${c.title}>` : c.title;
-    return `[${n}] ${title}${c.source ? ` · ${c.source}` : ""}`;
+    // Titles and sources come from documents: escaped, so a title can't ping or end the link.
+    const name = escapeSlackText(c.title);
+    const title = c.url ? `<${escapeSlackText(c.url).replaceAll("|", "%7C")}|${name}>` : name;
+    return `[${n}] ${title}${c.source ? ` · ${escapeSlackText(c.source)}` : ""}`;
   }
 
   node(node: HostNode) {
@@ -274,7 +288,7 @@ class Serializer {
       `*${state}*`,
       exitCode !== undefined ? `exit ${exitCode}` : null,
       durationMs !== undefined ? `${(durationMs / 1000).toFixed(1)}s` : null,
-      cwd ? `\`${cwd}\`` : null,
+      cwd ? `\`${escapeSlackText(cwd)}\`` : null,
     ].filter(Boolean);
     this.fallback.push(`$ ${command} (${state.toLowerCase()})`);
     this.blocks.push({
@@ -400,7 +414,10 @@ class Serializer {
 
   code({ text, title }: PrimitiveProps["Code"]) {
     if (title) {
-      this.blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `\`${title}\`` }] });
+      this.blocks.push({
+        type: "context",
+        elements: [{ type: "mrkdwn", text: `\`${escapeSlackText(title)}\`` }],
+      });
     }
     this.blocks.push(this.preformatted(text));
   }
@@ -638,6 +655,7 @@ class Serializer {
    * `amountModal`, which collects the number and sends the same action.
    */
   amount({ label, hint, submit }: PrimitiveProps["Amount"]) {
+    if (!this.options.amountForm) return;
     const button: HostNode = {
       type: "aui:Button",
       props: {
@@ -653,13 +671,14 @@ class Serializer {
 
   /** What a person asked, as the message a thread hangs from: who, then their words. */
   request({ by, text }: PrimitiveProps["Request"]) {
-    const who = MENTION.test(by) ? by : `*${escapeMrkdwn(by)}*`;
+    // The fallback text is escaped once, with all the rest, in finish().
+    const who = isMention(by) ? by : `*${plainName(by)}*`;
     this.fallback.push(`${by}: ${text}`);
     this.blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: this.clip(`${who}: ${escapeMrkdwn(text)}`, LIMITS.sectionText, "request"),
+        text: this.clip(`${who}: ${escapeSlackText(text)}`, LIMITS.sectionText, "request"),
       },
     });
   }
@@ -685,9 +704,7 @@ class Serializer {
     });
     // The buttons keep no pressed state, so a rating already given is said in words.
     if (selected) {
-      const said =
-        labels?.rated?.[selected] ??
-        `Rated ${(selected === "up" ? (labels?.up ?? "Helpful") : (labels?.down ?? "Not helpful")).toLowerCase()}`;
+      const said = labels?.rated?.[selected] ?? defaultCopy.rated[selected];
       this.blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: toMrkdwn(said) }] });
     }
   }
@@ -759,7 +776,8 @@ class Serializer {
         },
       ];
     }
-    const text = (this.summary ?? this.fallback.join("\n\n")).trim();
+    // Slack parses fallback text like mrkdwn: escaped, so nothing in it can ping or link.
+    const text = escapeSlackText((this.summary ?? this.fallback.join("\n\n")).trim());
     return {
       blocks,
       pages: pages ?? [blocks],
@@ -769,31 +787,17 @@ class Serializer {
   }
 }
 
-/** A Slack mention on its own: `<@U123>`. */
-const MENTION = /^<@[UW][A-Z0-9]+>$/;
-
-/**
- * A person's own words as mrkdwn: `<`, `>` and `&` are escaped so nothing in
- * them becomes a link or a ping, except mentions and channel links Slack put there.
- */
-function escapeMrkdwn(text: string): string {
-  return text
-    .split(/(<[@#!][^<>\s]+>)/g)
-    .map((piece, i) =>
-      i % 2 === 1
-        ? piece
-        : piece.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
-    )
-    .join("");
-}
-
 /** Flatten through any non-primitive wrappers so containers find their children. */
 function flatten(children: HostChild[]): HostNode[] {
   return children.flatMap((c) => (c.type === "#text" ? [] : [c as HostNode]));
 }
 
-export function serialize(tree: HostChild[], placement: Placement): SerializeResult {
-  const s = new Serializer(placement);
+export function serialize(
+  tree: HostChild[],
+  placement: Placement,
+  options: SerializeOptions = {},
+): SerializeResult {
+  const s = new Serializer(placement, options);
   for (const child of tree) {
     if (child.type === "#text") {
       s.warnings.push("bare text outside a primitive dropped; wrap it in <Text>");

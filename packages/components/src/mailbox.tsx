@@ -185,10 +185,12 @@ export function MessagePartView({
                   ))}
                   {ack && <Button label={copy.acknowledge} action={act(ActionId.acknowledge)} />}
                 </Actions>
-                {raise && (
+                {/* Offered amounts are the only ones the platform takes: no field beside them. */}
+                {raise && !part.raiseTo?.length && (
                   <RaiseLimit
                     unit={meter.unit}
                     limit={meter.limit}
+                    {...(part.raiseMax !== undefined ? { max: part.raiseMax } : {})}
                     action={act(ActionId.raiseBudget)}
                     copy={copy}
                   />

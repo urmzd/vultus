@@ -79,6 +79,10 @@ export class TurnStream {
   /** A session in a code channel is the channel itself, with no thread. */
   private threadless = false;
   private readonly copy: Copy;
+  /** Pages of the final layout Slack already has. */
+  private delivered = 0;
+  /** Every call runs after the one before it, so concurrent callers can't open two messages. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly slack: SlackCaller,
@@ -162,7 +166,7 @@ export class TurnStream {
       recipient_team_id: this.target.recipientTeam,
       ...streamStart(turn),
     };
-    const header = streamHeader(turn, { page: this.page });
+    const header = streamHeader(turn, { page: this.page, labels: { part: this.copy.part } });
     let started: { ts: string };
     try {
       started = await this.slack.call("chat.startStream", {
@@ -172,9 +176,12 @@ export class TurnStream {
     } catch (e) {
       const rejected = /^invalid_(chunks|blocks)$/.test(slackCode(e) ?? "");
       if (!rejected || header.length === 0) throw e;
-      // The workspace does not take block chunks yet: the continuation opens without its header.
-      this.log(`continuation header left out: ${(e as Error).message}`);
-      started = await this.slack.call("chat.startStream", args);
+      // The workspace does not take block chunks yet: say the same thing as a line of text.
+      this.log(`continuation header sent as text: ${(e as Error).message}`);
+      started = await this.slack.call("chat.startStream", {
+        ...args,
+        markdown_text: `_${this.copy.part(this.page)}_\n\n`,
+      });
     }
     this.ts = started.ts;
     this.messages.push(this.ts);
@@ -254,7 +261,18 @@ export class TurnStream {
    * Bring Slack up to a turn that is still going. A write Slack refuses does
    * not end the turn: writing stops for now, and `finish` still ends it.
    */
-  async update(turn: Turn): Promise<void> {
+  update(turn: Turn): Promise<void> {
+    return this.serial(() => this.updateNow(turn));
+  }
+
+  /** Run after everything already asked of this turn, whatever became of it. */
+  private serial<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  private async updateNow(turn: Turn): Promise<void> {
     if (this.closed || this.degraded) return;
     await this.sync(turn);
     try {
@@ -288,9 +306,16 @@ export class TurnStream {
    * written can't take the end of the turn, the stream is closed and the whole
    * turn is posted again as a new message.
    */
-  async finish(turn: Turn): Promise<Presented> {
+  finish(turn: Turn): Promise<Presented> {
+    return this.serial(() => this.finishNow(turn));
+  }
+
+  private async finishNow(turn: Turn): Promise<Presented> {
     if (this.closed) return { ts: this.ts, messages: this.messages };
     this.closed = true;
+    /** The final layout. `this.delivered` counts how many of its pages Slack has. */
+    let final: ReturnType<TurnStream["view"]> | null = null;
+    this.delivered = 0;
     try {
       if (this.degraded) throw new Error("an earlier write failed");
       if (this.native && this.ts) {
@@ -300,39 +325,50 @@ export class TurnStream {
         if (rewritten) throw new Error("the answer was rewritten after it streamed");
         if (chunks.length > 0) await this.append(turn, chunks);
         const title = streamStopTitle(turn);
-        const final = this.view(turn, true);
-        const [first = [], ...rest] = final.pages;
+        final = this.view(turn, true);
+        const [first = []] = final.pages;
         await this.slack.call("chat.stopStream", {
           channel: this.target.channel,
           ts: this.ts,
           ...(title ? { chunks: [{ type: "plan_update", title }] } : {}),
           blocks: first,
         });
-        await this.overflow(rest, final.text, final.pages.length);
+        this.delivered = 1;
+        await this.overflow(final);
         for (const w of final.warnings) this.log(`render warning: ${w}`);
       } else {
         // Nothing was streamed, so the message carries the whole turn.
-        const final = this.view(turn, false);
-        const [first = [], ...rest] = final.pages;
+        final = this.view(turn, false);
+        const [first = []] = final.pages;
         if (!this.ts) await this.post(first, final.text);
         else await this.edit(first, final.text);
-        await this.overflow(rest, final.text, final.pages.length);
+        this.delivered = 1;
+        await this.overflow(final);
         for (const w of final.warnings) this.log(`render warning: ${w}`);
       }
     } catch (e) {
-      this.log(`ending the turn in place failed, posting it whole: ${(e as Error).message}`);
-      if (this.native && this.ts) {
-        await this.slack
-          .call("chat.stopStream", { channel: this.target.channel, ts: this.ts })
-          .catch(() => {});
-      }
-      const final = this.view(turn, false);
-      try {
-        const [first = [], ...rest] = final.pages;
-        await this.post(first, final.text);
-        await this.overflow(rest, final.text, final.pages.length);
-      } catch (again) {
-        this.log(`the turn could not be posted: ${(again as Error).message}`);
+      if (final && this.delivered > 0) {
+        // The turn's first message is in place: only what didn't arrive is sent again.
+        this.log(`a continuation failed, sending the rest again: ${(e as Error).message}`);
+        await this.overflow(final).catch((again: Error) =>
+          this.log(`the rest of the turn could not be posted: ${again.message}`),
+        );
+      } else {
+        this.log(`ending the turn in place failed, posting it whole: ${(e as Error).message}`);
+        if (this.native && this.ts) {
+          await this.slack
+            .call("chat.stopStream", { channel: this.target.channel, ts: this.ts })
+            .catch(() => {});
+        }
+        const whole = this.view(turn, false);
+        try {
+          const [first = []] = whole.pages;
+          await this.post(first, whole.text);
+          this.delivered = 1;
+          await this.overflow(whole);
+        } catch (again) {
+          this.log(`the turn could not be posted: ${(again as Error).message}`);
+        }
       }
     }
     // Reactions and the session status are each tried, whatever happened above.
@@ -340,10 +376,16 @@ export class TurnStream {
     return { ts: this.ts, messages: this.messages };
   }
 
-  /** Final blocks that outgrew one message follow it, each with its own fallback text. */
-  private async overflow(rest: Block[][], text: string, total: number) {
-    for (const [i, blocks] of rest.entries()) {
-      await this.post(blocks, this.copy.continued(i + 2, total, text));
+  /**
+   * Final blocks that outgrew one message follow it, each with its own
+   * fallback text: every page Slack doesn't have yet, counted as it lands.
+   */
+  private async overflow(final: { pages: Block[][]; text: string }) {
+    while (this.delivered < final.pages.length) {
+      const blocks = final.pages[this.delivered] as Block[];
+      const page = this.delivered + 1;
+      await this.post(blocks, this.copy.continued(page, final.pages.length, final.text));
+      this.delivered = page;
     }
   }
 }

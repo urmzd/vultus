@@ -1,26 +1,24 @@
+import { parseAmount } from "@vultus/core";
 import type { PrimitiveProps } from "@vultus/primitives";
 import { useContext, useId, useState } from "react";
 import { ActionContext, buttonClass } from "./buttons";
 
-/** A number this unit takes: dollars and cents for money, a whole number for the rest. */
-function parseAmount(text: string, unit: string): number | undefined {
-  const t = text.trim().replace(/^\$/, "").replaceAll(",", "");
-  if (!(unit === "usd" ? /^\d+(\.\d{1,2})?$/ : /^\d+$/).test(t)) return undefined;
-  return Number(t);
-}
-
 /**
  * A number field and its button. The button sends the number as the action's
- * `option`, and stays off until the number is valid and more than `above`.
+ * `option`, and stays off until the number is valid, more than `above` and
+ * no more than `max`.
  */
-export function Amount({ label, unit, above, hint, submit }: PrimitiveProps["Amount"]) {
+export function Amount({ label, unit, above, max, hint, submit }: PrimitiveProps["Amount"]) {
   const onAction = useContext(ActionContext);
   const [text, setText] = useState("");
   const id = useId();
   const hintId = useId();
   const money = unit === "usd";
-  const value = parseAmount(text, unit);
-  const ok = value !== undefined && (above === undefined || value > above);
+  const value = parseAmount(text.replace(/^\$/, ""), unit);
+  const ok =
+    value !== undefined &&
+    (above === undefined || value > above) &&
+    (max === undefined || value <= max);
   const bad = text.trim() !== "" && !ok;
   return (
     <form

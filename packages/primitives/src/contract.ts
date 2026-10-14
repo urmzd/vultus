@@ -261,8 +261,10 @@ export interface TilesProps {
 /**
  * A number the reader types, sent with its button as the action's `option`
  * (the number in `unit`, as a plain decimal string). The web draws a number
- * field beside the button. Slack has no number field in messages, so it shows
- * the button and the host opens `amountModal` on the click to collect it.
+ * field beside the button. Slack has no number field in messages: it shows
+ * the button only when the host says it opens `amountModal` on the click
+ * (`renderToSlack(…, { amountForm: true })`), and nothing otherwise, so no
+ * button leads nowhere.
  */
 export interface AmountProps {
   label: string;
@@ -270,16 +272,22 @@ export interface AmountProps {
   unit: string;
   /** The amount must be more than this, such as the limit in force. */
   above?: number;
+  /** The amount may be at most this. */
+  max?: number;
   /** A muted line under the field. */
   hint?: string;
   submit: { label: string; action: ActionRef; style?: "primary" | "danger" };
 }
 
 /**
- * What a person asked, in their own words. The web draws it as their chat
- * bubble; Slack posts it as the message a thread hangs from. `by` is the
- * person's name, or on Slack a mention such as `<@U123>`, which Slack shows
- * as their name.
+ * What a person asked, in their own words. The web draws who asked over their
+ * bubble; Slack posts "who: words" as the message a thread hangs from.
+ *
+ * `by` is the person's name, or a mention such as `<@U123>`. `text` is raw:
+ * what they typed, not Slack's entity-encoded form, so decode `&lt;`, `&gt;`
+ * and `&amp;` from a Slack event first. In both, user mentions (`<@U…>`) and
+ * channel links (`<#C…>`) are kept (the web shows them as "@name"); anything
+ * else, including `<!channel>` and links, is shown as text and never pings.
  */
 export interface RequestProps {
   by: string;

@@ -741,6 +741,7 @@ export function AgentList({
 export function RaiseLimit({
   unit,
   limit,
+  max,
   action,
   copy = defaultCopy,
 }: {
@@ -748,6 +749,8 @@ export function RaiseLimit({
   unit: string;
   /** The limit in force. The new one must be more. */
   limit: number;
+  /** The most it may be raised to. */
+  max?: number;
   /** Usually `partAction(message, part, ActionId.raiseBudget)`. */
   action: ActionRef;
 } & WithCopy) {
@@ -756,6 +759,7 @@ export function RaiseLimit({
       label={copy.newLimit}
       unit={unit}
       above={limit}
+      {...(max !== undefined ? { max } : {})}
       hint={copy.moreThan(formatAmount(limit, unit))}
       submit={{ label: copy.raiseLimit, action }}
     />

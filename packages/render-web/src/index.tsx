@@ -36,7 +36,7 @@ export {
   useDisclosure,
   useVerbSequence,
 } from "./motion";
-export { RequestBubble } from "./request";
+export { RequestBubble, readableMentions } from "./request";
 export { StatusIcon, statusLabel } from "./task";
 
 /**

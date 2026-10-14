@@ -233,6 +233,11 @@ export const defaultCopy = {
   raiseLimit: "Raise Limit",
   raiseLimitTitle: "Raise the limit",
   newLimit: "New limit",
+  /** A number field's label with its unit: "New limit ($)", "New limit (runs)". */
+  amountLabel: (label: string, unit: string) =>
+    unit === "usd" ? `${label} ($)` : `${label} (${unit})`,
+  /** Labels a message that continues a longer one. */
+  part: (n: number) => `Part ${n}`,
   /** Under the field: the new limit must be more than the current one. */
   moreThan: (amount: string) => `More than ${amount}`,
   /** A turn still running after its live output was closed. Said once, in words, never animated. */

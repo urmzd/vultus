@@ -62,43 +62,74 @@ describe("empty containers", () => {
 });
 
 describe("a limit", () => {
-  it("offers Acknowledge and a raise to a typed amount when the host lists them", () => {
-    const { blocks } = renderToSlack(<MessageView message={mail("m-limit")} />);
-    const json = JSON.stringify(blocks);
-    expect(json).toContain(`"${defaultCopy.acknowledge}"`);
-    expect(json).not.toContain(defaultCopy.allowOnce);
-    const raise = blocks.find((b) =>
+  const raiseButton = (blocks: Record<string, unknown>[]) =>
+    blocks.find((b) =>
       (b.accessory as { action_id?: string } | undefined)?.action_id?.startsWith(
         ActionId.raiseBudget,
       ),
-    ) as unknown as {
-      text: { text: string };
-      accessory: { value: string; text: { text: string } };
-    };
-    expect(raise.text.text).toContain(defaultCopy.newLimit);
-    expect(raise.text.text).toContain("More than $250.00");
-    expect(raise.accessory.text.text).toBe(defaultCopy.raiseLimit);
+    ) as unknown as
+      | { text: { text: string }; accessory: { value: string; text: { text: string } } }
+      | undefined;
+
+  it("offers Acknowledge and, for a host that opens amountModal, a raise to a typed amount", () => {
+    const { blocks } = renderToSlack(<MessageView message={mail("m-limit")} />, {
+      amountForm: true,
+    });
+    const json = JSON.stringify(blocks);
+    expect(json).toContain(`"${defaultCopy.acknowledge}"`);
+    expect(json).not.toContain(defaultCopy.allowOnce);
+    const raise = raiseButton(blocks);
+    expect(raise?.text.text).toContain(defaultCopy.newLimit);
+    expect(raise?.text.text).toContain("More than $250.00");
+    expect(raise?.accessory.text.text).toBe(defaultCopy.raiseLimit);
     // The click carries no amount: the host collects it in amountModal.
-    expect(decodeAction(raise.accessory.value)).toEqual({ turnId: "m-limit", target: "spend" });
+    expect(decodeAction(raise?.accessory.value ?? "")).toEqual({
+      turnId: "m-limit",
+      target: "spend",
+    });
+  });
+
+  it("shows no Raise Limit button to a host that doesn't open the form", () => {
+    const { blocks } = renderToSlack(<MessageView message={mail("m-limit")} />);
+    expect(raiseButton(blocks)).toBeUndefined();
+    expect(JSON.stringify(blocks)).toContain(`"${defaultCopy.acknowledge}"`);
+  });
+
+  it("offers no typed amount beside the amounts a part offers", () => {
+    const { blocks } = renderToSlack(<MessageView message={mail("m-budget")} />, {
+      amountForm: true,
+    });
+    expect(JSON.stringify(blocks)).not.toContain(defaultCopy.newLimit);
+    expect(JSON.stringify(blocks)).toContain(defaultCopy.raiseTo("$75"));
   });
 
   it("collects the amount in a modal and sends the same action with it", () => {
     const action = { id: ActionId.raiseBudget, payload: { turnId: "m-limit", target: "spend" } };
-    const view = amountModal({ action, unit: "usd", above: 250 });
+    const view = amountModal({ action, unit: "usd", above: 250, max: 1000 });
     expect(view.callback_id).toBe(AMOUNT_MODAL);
+    expect(view.blocks[0]?.label.text).toBe(defaultCopy.amountLabel(defaultCopy.newLimit, "usd"));
     expect(view.blocks[0]?.element).toMatchObject({
       type: "number_input",
       is_decimal_allowed: true,
       min_value: "250.01",
+      max_value: "1000.00",
     });
-    const submit = (value: string) =>
-      decodeAmountModal({ ...view, state: { values: { amount: { value: { value } } } } });
+    const submit = (value: string, v: { private_metadata?: string } = view) =>
+      decodeAmountModal({ ...view, ...v, state: { values: { amount: { value: { value } } } } });
     expect(submit("400")).toEqual({ ...action, payload: { ...action.payload, option: "400" } });
-    expect(submit("250")).toBeNull();
-    expect(submit("")).toBeNull();
+    expect(submit("400.5")?.payload.option).toBe("400.5");
+    for (const bad of ["250", "", "400.555", "1e3", "0x200", "-300", "+300", "1000.01", "abc"]) {
+      expect(submit(bad), bad).toBeNull();
+    }
+    expect(submit("400", { private_metadata: "{not json" })).toBeNull();
+    expect(submit("400", { private_metadata: '{"id":1}' })).toBeNull();
     expect(decodeAmountModal({ callback_id: "other" })).toBeNull();
     const runs = amountModal({ action, unit: "runs", above: 200 });
     expect(runs.blocks[0]?.element).toMatchObject({ is_decimal_allowed: false, min_value: "201" });
+    const counted = (value: string) =>
+      decodeAmountModal({ ...runs, state: { values: { amount: { value: { value } } } } });
+    expect(counted("300")?.payload.option).toBe("300");
+    expect(counted("300.5")).toBeNull();
   });
 });
 
@@ -130,12 +161,57 @@ describe("RequestView", () => {
     expect(named.blocks).toEqual([
       { type: "section", text: { type: "mrkdwn", text: "*Dana*: is &lt;b&gt; &amp; 5 &gt; 4?" } },
     ]);
-    expect(named.text).toBe("Dana: is <b> & 5 > 4?");
-    const mention = renderToSlack(<RequestView by="<@U0SANDBOX>" text="ask <@U0OTHER>" />);
+    expect(named.text).toBe("Dana: is &lt;b&gt; &amp; 5 &gt; 4?");
+    const mention = renderToSlack(
+      <RequestView by="<@U0SANDBOX>" text="ask <@U0OTHER|dana> in <#C0GENERAL>" />,
+    );
     expect(mention.blocks[0]?.text).toEqual({
       type: "mrkdwn",
-      text: "<@U0SANDBOX>: ask <@U0OTHER>",
+      text: "<@U0SANDBOX>: ask <@U0OTHER|dana> in <#C0GENERAL>",
     });
+  });
+
+  it.each([
+    "<!channel>",
+    "<!here>",
+    "<!everyone>",
+    "<!subteam^S0TEAM>",
+    "<!subteam^S0TEAM|@oncall>",
+    "<https://evil.example.com|your bank>",
+    "<mailto:a@example.com|mail>",
+  ])("never lets %s ping or link, in the words, the name or the fallback", (token) => {
+    const out = renderToSlack(<RequestView by={token} text={`hi ${token}`} />);
+    const shown = JSON.stringify(out.blocks);
+    expect(shown).not.toContain(token);
+    expect(out.text).not.toContain(token);
+    expect(out.text).not.toMatch(/<[!h]/);
+  });
+
+  it("keeps a name's formatting characters from breaking the bold", () => {
+    const out = renderToSlack(<RequestView by="a*b_c" text="x" />);
+    expect((out.blocks[0]?.text as { text: string }).text).toMatch(/^\*a[^*_]b[^*_]c\*: x$/);
+  });
+
+  it("escapes what documents bring into sources and code titles", () => {
+    const out = renderToSlack(
+      <TurnView
+        turn={{
+          ...fx.doneTurn,
+          citations: [
+            {
+              id: "c",
+              title: "<!channel> notes",
+              source: "<!here>",
+              url: "https://example.com/a?b=1&c=2",
+            },
+          ],
+        }}
+      />,
+    );
+    const json = JSON.stringify(out.blocks);
+    expect(json).not.toContain("<!channel>");
+    expect(json).not.toContain("<!here>");
+    expect(json).toContain("<https://example.com/a?b=1&amp;c=2|&lt;!channel&gt; notes>");
   });
 });
 

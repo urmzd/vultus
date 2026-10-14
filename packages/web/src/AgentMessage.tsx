@@ -254,9 +254,10 @@ export function AgentMessage({
 }
 
 /**
- * The person's message: a right-aligned bubble. The same bubble `RequestView`
- * draws inside a surface, which Slack posts as the thread's first message.
+ * The person's message in a chat: a right-aligned bubble. The same bubble
+ * `RequestView` draws inside a surface (which Slack posts as the thread's
+ * first message), without the name, since a chat's own speaker is "You".
  */
 export function UserMessage({ text, name = "You" }: { text: string; name?: string }) {
-  return <RequestBubble by={name} text={text} />;
+  return <RequestBubble by={name} text={text} showBy={false} />;
 }

@@ -47,6 +47,16 @@ export interface ClientOptions {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** The longest Retry-After waited out; a longer one is an error to the caller. */
+const MAX_RETRY_AFTER_S = 60;
+
+/** Seconds to wait from a Retry-After header: one when missing or unreadable, capped. */
+function retryAfter(res: Response): number {
+  const s = Number(res.headers.get("retry-after"));
+  if (!Number.isFinite(s) || s <= 0) return 1;
+  return Math.min(s, MAX_RETRY_AFTER_S);
+}
+
 function slackHook(url: string): boolean {
   try {
     const u = new URL(url);
@@ -58,51 +68,61 @@ function slackHook(url: string): boolean {
 
 type Body = { ok: boolean; error?: string } & Record<string, unknown>;
 
+/** Slack's answer, or a SlackError naming the method when it isn't JSON (a 5xx page). */
+async function read(method: string, res: Response): Promise<Body> {
+  try {
+    return (await res.json()) as Body;
+  } catch {
+    throw new SlackError(method, `http_${res.status}`);
+  }
+}
+
 /** A client for one token. Without a token it can still call public methods (blocks.validate). */
 export function slackClient(token: string | undefined, opts: ClientOptions = {}): SlackClient {
   const send = opts.fetch ?? fetch;
+  const retries = opts.retries ?? 3;
   const auth: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
+  /** One call, with a 429 waited out up to `retries` times. */
+  const request = async (method: string, init: () => RequestInit): Promise<Body> => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await send(`https://slack.com/api/${method}`, { method: "POST", ...init() });
+      if (res.status === 429 && attempt < retries) {
+        await wait(retryAfter(res) * 1000);
+        continue;
+      }
+      const body = await read(method, res);
+      if (!body.ok) {
+        throw new SlackError(
+          method,
+          body.error ?? `http_${res.status}`,
+          body.response_metadata ?? body.errors,
+        );
+      }
+      if (body.warning) opts.log?.(`${method} warning: ${String(body.warning)}`);
+      return body;
+    }
+  };
   return {
     async call(method, args = {}) {
-      for (let attempt = 0; ; attempt++) {
-        const res = await send(`https://slack.com/api/${method}`, {
-          method: "POST",
-          headers: { "content-type": "application/json; charset=utf-8", ...auth },
-          body: JSON.stringify(args),
-        });
-        if (res.status === 429 && attempt < (opts.retries ?? 3)) {
-          await wait(Number(res.headers.get("retry-after") ?? "1") * 1000);
-          continue;
-        }
-        const body = (await res.json()) as Body;
-        if (!body.ok) {
-          throw new SlackError(
-            method,
-            body.error ?? `http_${res.status}`,
-            body.response_metadata ?? body.errors,
-          );
-        }
-        if (body.warning) opts.log?.(`${method} warning: ${String(body.warning)}`);
-        return body as never;
-      }
+      return (await request(method, () => ({
+        headers: { "content-type": "application/json; charset=utf-8", ...auth },
+        body: JSON.stringify(args),
+      }))) as never;
     },
     async form(method, args) {
-      const res = await send(`https://slack.com/api/${method}`, {
-        method: "POST",
+      return (await request(method, () => ({
         headers: auth,
         body: new URLSearchParams(args),
-      });
-      const body = (await res.json()) as Body;
-      if (!body.ok) throw new SlackError(method, body.error ?? `http_${res.status}`);
-      return body as never;
+      }))) as never;
     },
     async respond(url, body) {
       if (!slackHook(url)) return;
-      await send(url, {
+      const res = await send(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!res.ok) throw new SlackError("respond", `http_${res.status}`);
     },
   };
 }

@@ -1,4 +1,5 @@
-import { decodeAction, encodeAction, formatAmount, type UiAction } from "@vultus/core";
+import { defaultCopy } from "@vultus/components";
+import { decodeAction, encodeAction, formatAmount, parseAmount, type UiAction } from "@vultus/core";
 
 /**
  * The ways into an agent besides a direct message or a mention, and the forms
@@ -25,7 +26,7 @@ const plain = (text: string, max: number) => ({
   text: text.length <= max ? text : `${text.slice(0, max - 1)}…`,
 });
 
-/** Mirrors `copy.askForm` in @vultus/components; pass the host's copy to change it. */
+/** The form's words. Defaults are `copy.askForm` from @vultus/components. */
 export interface AskFormLabels {
   title: string;
   label: string;
@@ -33,12 +34,16 @@ export interface AskFormLabels {
   cancel: string;
 }
 
-const ASK_LABELS: AskFormLabels = {
-  title: "Ask the agent",
-  label: "What do you need?",
-  send: "Send",
-  cancel: "Cancel",
-};
+/** private_metadata as JSON, or null when it isn't. A form never throws on what Slack sends back. */
+function metadata<T>(text: string | undefined): T | null {
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null ? (parsed as T) : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The one-field form a shortcut opens (`ENTRY.form`). `meta` comes back on
@@ -49,7 +54,7 @@ export function askForm(
   options: Partial<AskFormLabels> & { initial?: string; meta?: Record<string, unknown> } = {},
 ) {
   const { initial, meta = { kind: "ask" }, ...labels } = options;
-  const l = { ...ASK_LABELS, ...labels };
+  const l = { ...defaultCopy.askForm, ...labels };
   const metadata = JSON.stringify(meta);
   if (metadata.length > 3000)
     throw new RangeError("private_metadata is limited to 3000 characters");
@@ -85,11 +90,11 @@ export function decodeAskForm<M = { kind: string }>(view: {
   if (view.callback_id !== ENTRY.form) return null;
   const text = view.state?.values?.text?.value?.value?.trim() ?? "";
   if (!text) return null;
-  const meta = (view.private_metadata ? JSON.parse(view.private_metadata) : {}) as M;
-  return { text, meta };
+  const meta = view.private_metadata ? metadata<M>(view.private_metadata) : ({} as M);
+  return meta ? { text, meta } : null;
 }
 
-/** Mirrors `copy.raiseLimitTitle`, `copy.newLimit`, `copy.raiseLimit` and `copy.cancel`. */
+/** The modal's words. Defaults come from `defaultCopy` in @vultus/components. */
 export interface AmountModalLabels {
   title: string;
   label: string;
@@ -97,15 +102,18 @@ export interface AmountModalLabels {
   cancel: string;
   /** Said under the field when there is a lower bound: "More than $50.00". */
   moreThan: (amount: string) => string;
+  /** The label with its unit: "New limit ($)". */
+  withUnit: (label: string, unit: string) => string;
 }
 
-const AMOUNT_LABELS: AmountModalLabels = {
-  title: "Raise the limit",
-  label: "New limit",
-  submit: "Raise Limit",
-  cancel: "Cancel",
-  moreThan: (amount) => `More than ${amount}`,
-};
+const amountLabels = (): AmountModalLabels => ({
+  title: defaultCopy.raiseLimitTitle,
+  label: defaultCopy.newLimit,
+  submit: defaultCopy.raiseLimit,
+  cancel: defaultCopy.cancel,
+  moreThan: defaultCopy.moreThan,
+  withUnit: defaultCopy.amountLabel,
+});
 
 /** The smallest step a unit takes: a cent for money, one for counts. */
 function step(unit: string) {
@@ -124,11 +132,12 @@ export function amountModal(
     action,
     unit,
     above,
+    max,
     initial,
-  }: { action: UiAction; unit: string; above?: number; initial?: number },
+  }: { action: UiAction; unit: string; above?: number; max?: number; initial?: number },
   labels: Partial<AmountModalLabels> = {},
 ) {
-  const l = { ...AMOUNT_LABELS, ...labels };
+  const l = { ...amountLabels(), ...labels };
   const decimal = unit === "usd";
   const min = above === undefined ? undefined : above + step(unit);
   const fixed = (n: number) => (decimal ? n.toFixed(2) : String(Math.round(n)));
@@ -141,6 +150,7 @@ export function amountModal(
       p: encodeAction(action.payload),
       unit,
       above,
+      max,
     }),
     title: plain(l.title, 24),
     submit: plain(l.submit, 24),
@@ -149,7 +159,7 @@ export function amountModal(
       {
         type: "input",
         block_id: "amount",
-        label: plain(decimal ? `${l.label} ($)` : `${l.label} (${unit})`, 2000),
+        label: plain(l.withUnit(l.label, unit), 2000),
         ...(above !== undefined
           ? { hint: plain(l.moreThan(formatAmount(above, unit)), 2000) }
           : {}),
@@ -158,6 +168,7 @@ export function amountModal(
           action_id: "value",
           is_decimal_allowed: decimal,
           ...(min !== undefined ? { min_value: fixed(min) } : {}),
+          ...(max !== undefined ? { max_value: fixed(max) } : {}),
           ...(initial !== undefined ? { initial_value: fixed(initial) } : {}),
         },
       },
@@ -167,21 +178,34 @@ export function amountModal(
 
 /**
  * The action a submitted `amountModal` means, with the number in `option`, or
- * null when it isn't one, is empty, or isn't more than the lower bound.
+ * null when it isn't one, or the number isn't a plain amount in the unit
+ * (cents at most for money, whole for counts) above the lower bound and
+ * within the upper one. Never throws on what Slack sends back.
  */
 export function decodeAmountModal(view: {
   callback_id?: string;
   private_metadata?: string;
   state?: { values?: Record<string, Record<string, { value?: string | null }>> };
 }): UiAction | null {
-  if (view.callback_id !== AMOUNT_MODAL || !view.private_metadata) return null;
-  const { id, p, above } = JSON.parse(view.private_metadata) as {
-    id: UiAction["id"];
-    p: string;
-    above?: number;
-  };
-  const value = view.state?.values?.amount?.value?.value?.trim();
-  const n = value ? Number(value) : Number.NaN;
-  if (!Number.isFinite(n) || (above !== undefined && n <= above)) return null;
-  return { id, payload: { ...decodeAction(p), option: String(n) } };
+  if (view.callback_id !== AMOUNT_MODAL) return null;
+  const meta = metadata<{
+    id?: unknown;
+    p?: unknown;
+    unit?: unknown;
+    above?: unknown;
+    max?: unknown;
+  }>(view.private_metadata);
+  if (!meta || typeof meta.id !== "string" || typeof meta.p !== "string") return null;
+  if (typeof meta.unit !== "string") return null;
+  const n = parseAmount(view.state?.values?.amount?.value?.value ?? "", meta.unit);
+  if (n === undefined) return null;
+  if (typeof meta.above === "number" && n <= meta.above) return null;
+  if (typeof meta.max === "number" && n > meta.max) return null;
+  let payload: UiAction["payload"];
+  try {
+    payload = decodeAction(meta.p);
+  } catch {
+    return null;
+  }
+  return { id: meta.id as UiAction["id"], payload: { ...payload, option: String(n) } };
 }
