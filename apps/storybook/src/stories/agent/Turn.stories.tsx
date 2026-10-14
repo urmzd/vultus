@@ -73,6 +73,20 @@ export const Done: Story = {
   parameters: slack("doneTurn", "Reasoning is web only"),
 };
 
+export const StillWorking: Story = {
+  name: "Still working, live output closed",
+  args: { turn: fx.quietTurn },
+  parameters: slack(
+    "quietTurn",
+    "The host closed the stream on a long-quiet run and keeps following it. Nothing moves on either surface",
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(/is still working on this/)).toBeVisible();
+    await expect(canvasElement.querySelector("[data-aui-still]")).not.toBeNull();
+  },
+};
+
 export const Rated: Story = {
   name: "Done, already rated",
   args: { turn: fx.ratedTurn },

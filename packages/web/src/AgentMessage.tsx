@@ -52,7 +52,8 @@ const dot: Record<Turn["status"], string> = {
 
 /** What the agent is doing right now, as a verb: the running task, else a thinking sequence. */
 function useActivity(turn: Turn): string | null {
-  const busy = turn.status === "working" || turn.status === "queued";
+  // A run followed quietly shows its status, not motion.
+  const busy = (turn.status === "working" || turn.status === "queued") && !turn.detached;
   const nothingYet = !turn.text && turn.tasks.length === 0;
   const verb = useVerbSequence(busy && nothingYet, THINKING_VERBS);
   if (!busy) return null;
@@ -196,7 +197,8 @@ export function AgentMessage({
   }, [statusLine, final, turn.status, turn.stop, copy]);
   const activity = useActivity(turn);
   const busy = turn.status === "working" || turn.status === "queued";
-  const reasoningLive = busy && !turn.text && !turn.tasks.some((t) => t.status !== "pending");
+  const reasoningLive =
+    busy && !turn.detached && !turn.text && !turn.tasks.some((t) => t.status !== "pending");
 
   const settled =
     turn.status === "done" && turn.durationMs !== undefined
@@ -208,9 +210,10 @@ export function AgentMessage({
       aria-label={`${turn.agent.name} message`}
       aria-busy={busy || undefined}
       data-turn-id={turn.id}
+      data-aui-still={turn.detached || undefined}
       className="aui-fade-up grid min-w-0 scroll-mt-4 grid-cols-[1.75rem_minmax(0,1fr)] gap-x-2.5"
     >
-      <AgentAvatar agent={turn.agent} state={turnOrbState(turn)} />
+      <AgentAvatar agent={turn.agent} state={turn.detached ? "idle" : turnOrbState(turn)} />
       <div className="flex min-w-0 flex-col gap-2">
         <header className="flex h-7 min-w-0 items-center gap-2 text-aui-sm">
           <span className="font-semibold text-aui-fg">{turn.agent.name}</span>

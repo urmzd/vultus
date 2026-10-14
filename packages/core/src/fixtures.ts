@@ -1401,6 +1401,9 @@ export const agentList: { name: string; description?: string }[] = [
   { name: "scratch" },
 ];
 
+/** A run still going after its live output was closed: followed quietly, shown without motion. */
+export const quietTurn: Turn = { ...streamingTurn, id: "turn-quiet", detached: true };
+
 /** A finished turn the reader already rated. */
 export const ratedTurn: Turn = { ...doneTurn, id: "turn-rated", feedback: "up" };
 

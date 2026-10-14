@@ -602,6 +602,18 @@
     transition: none;
   }
 }
+
+/* A run followed quietly after its live output closed: nothing moves, the words say it. */
+[data-aui-still] .aui-spinner,
+[data-aui-still] .aui-streaming > :last-child::after,
+[data-aui-still] .aui-verb-in {
+  animation: none;
+}
+[data-aui-still] .aui-shimmer {
+  animation: none;
+  background: none;
+  color: var(--aui-fg);
+}
 }
 
 @layer components {

@@ -235,6 +235,9 @@ export const defaultCopy = {
   newLimit: "New limit",
   /** Under the field: the new limit must be more than the current one. */
   moreThan: (amount: string) => `More than ${amount}`,
+  /** A turn still running after its live output was closed. Said once, in words, never animated. */
+  stillWorking: (name: string) =>
+    `${name} is still working on this. The answer will appear here when it's ready.`,
   /** What Slack says under the rating buttons, which can't show which one was pressed. */
   rated: { up: "Rated helpful", down: "Rated not helpful" },
   home: {

@@ -609,7 +609,7 @@ export function TurnView({
       {!streamed && turn.text && (
         <Markdown
           text={linkCitations(turn.text, turn.citations)}
-          streaming={turn.status === "working"}
+          streaming={turn.status === "working" && !turn.detached}
         />
       )}
       {turn.attachments?.map((a) => (
@@ -649,6 +649,9 @@ export function TurnView({
       {turn.notices.map((n) => (
         <NoticeView key={n.id} notice={n} copy={copy} />
       ))}
+      {turn.detached && (turn.status === "working" || turn.status === "queued") && (
+        <Context items={[copy.stillWorking(turn.agent.name)]} />
+      )}
       {turn.status === "failed" && turn.failure && (
         <FailureAlert
           turnId={turn.id}

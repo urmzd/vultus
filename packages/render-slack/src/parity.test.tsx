@@ -151,6 +151,23 @@ describe("AgentList", () => {
   });
 });
 
+describe("a run followed quietly", () => {
+  it("says it is still working, in the final layout too, and only while it runs", () => {
+    const line = {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: defaultCopy.stillWorking("Assistant") }],
+    };
+    for (const streamed of [false, true]) {
+      expect(
+        renderToSlack(<TurnView turn={fx.quietTurn} streamed={streamed} />).blocks,
+      ).toContainEqual(line);
+    }
+    expect(renderToSlack(<TurnView turn={fx.streamingTurn} />).blocks).not.toContainEqual(line);
+    const ended = { ...fx.quietTurn, status: "done" as const };
+    expect(renderToSlack(<TurnView turn={ended} />).blocks).not.toContainEqual(line);
+  });
+});
+
 describe("feedback and report", () => {
   it("says a rating already given, since the buttons can't show it", () => {
     const { blocks } = renderToSlack(<TurnView turn={fx.ratedTurn} />);
