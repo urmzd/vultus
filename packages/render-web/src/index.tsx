@@ -35,6 +35,7 @@ export {
   useDisclosure,
   useVerbSequence,
 } from "./motion";
+export * from "./Tooltip";
 export { StatusIcon, statusLabel } from "./task";
 
 /**
