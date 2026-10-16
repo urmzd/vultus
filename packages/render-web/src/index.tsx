@@ -36,8 +36,8 @@ export {
   useDisclosure,
   useVerbSequence,
 } from "./motion";
-export * from "./Tooltip";
 export { RequestBubble, readableMentions } from "./request";
+export * from "./Tooltip";
 export { StatusIcon, statusLabel } from "./task";
 
 /**
