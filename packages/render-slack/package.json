@@ -1,6 +1,6 @@
 {
   "name": "@vultus/render-slack",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Render vultus components to Slack Block Kit JSON via a custom React reconciler.",
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vultus/components": "workspace:*",
     "@vultus/core": "workspace:*",
     "@vultus/primitives": "workspace:*",
     "react-reconciler": "^0.34.0"
@@ -21,7 +22,6 @@
     "react": "^19"
   },
   "devDependencies": {
-    "@vultus/components": "workspace:*",
     "@types/react-reconciler": "^0.33.1"
   }
 }
