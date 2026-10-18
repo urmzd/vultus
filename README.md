@@ -1,5 +1,7 @@
 # Vultus has moved to Warp
 
+> **Archived:** Vultus has been integrated into [Warp](https://github.com/urmzd/warp). Use Warp for development, issues, documentation, and new installations.
+
 The shared agent UI is now part of [Warp](https://github.com/urmzd/warp), alongside the platform, console and Slack app. Active development belongs there. This repository preserves the original source and release history.
 
 | Source | New location |
